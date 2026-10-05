@@ -132,6 +132,23 @@ width it is given.
 | `title` | Optional title above the rack. |
 | `max_width` | Optional maximum width, e.g. `640px`. |
 | `cooling` | The top of the rack: `temperature`, `humidity`, `fan_in`, `fan_out` (fan speed in rpm), `status`, `fault`, `sensor_fault`, `name`, `popup`. |
+| `frame` | `false` draws the devices alone, without frame, cooling, rails, numbers and plinth, cropped to the faceplates. |
+| `device_tap` | `false` turns off the tap on whole devices: the ports bound to an entity open a small panel instead (default `true`, `false` on a linked card). |
+
+### Linked card
+
+A second card can show some devices of a rack configured elsewhere, without repeating the configuration — for
+example the switch alone at the top of its pop-up:
+
+```yaml
+type: custom:rack-card
+from_view: server   # the view holding the main rack-card (omit to search the whole dashboard)
+only: [3]           # the units to show
+```
+
+It reads the main rack-card of that view (also inside stacks, conditional cards and pop-ups) and follows it when the
+dashboard is saved. With `only` it is drawn without frame and its devices do not react to a tap; its ports do. Any
+other option written on the linked card (`frame`, `device_tap`, `finish`…) overrides the main one.
 
 ### Devices
 
@@ -150,8 +167,10 @@ down).
 | `blank`, `vented`, `empty` | — |
 
 **Ports** (`switch`, `gateway`) map a port to an entity, either `5: sensor.some_entity` or
-`5: { name: Printer, entity: device_tracker.printer }`. The port lights up green when the entity is on, home,
-connected or above zero, blue when the entity is a power sensor in W (PoE).
+`5: { name: Access point, entity: sensor.ap_state, poe: sensor.ap_poe_power }`: `entity` is the connected device
+(any state, or a power sensor) and `poe` its PoE power in W. The port lights up green when the device is on, home,
+connected or above zero, blue while it draws PoE. When ports are tappable (`device_tap: false`) a tap opens a panel
+with the port, the device, its state, its PoE power and a button to its entity.
 
 **Labels** (`patch`, `pdu`) map a port or outlet to a text, or for patch ports to
 `{ label, color, link }`: `color` is the cable colour (`blue`, `grey`, `yellow`, `green`, `red`, `black`, `white`,

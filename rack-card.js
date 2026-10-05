@@ -6,7 +6,7 @@
  * navigation to its pop-up hash (Bubble Card pop-ups). Plain JavaScript, no build step, no external libraries.
  */
 (() => {
-  const VERSION = "0.4.0";
+  const VERSION = "0.5.0";
   const TAG = "rack-card";
   if (customElements.get(TAG)) return;
 
@@ -37,6 +37,29 @@
   };
   const num = (hass, id) => { const n = parseFloat(hass?.states[id]?.state); return isNaN(n) ? null : n; };
   const val = (hass, id, unit = "") => { const n = num(hass, id); return n === null ? "—" : `${Math.round(n)}${unit}`; };
+  const portName = (k, word) => ({ sfp1: "SFP+ 1", sfp2: "SFP+ 2", wan: "WAN" })[String(k).toLowerCase()] || `${word || "Port"} ${k}`;
+  const fmtW = (w) => `${(Math.round(w * 10) / 10).toString().replace(".", ",")} W`;
+
+  // the dashboard's own configuration, through HA's frontend tree
+  const huiRoot = () => {
+    const main = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main");
+    return main?.shadowRoot?.querySelector("ha-panel-lovelace")?.shadowRoot?.querySelector("hui-root") || null;
+  };
+  // the first rack-card with its own devices, in one view (by path) or in the whole dashboard, looking inside
+  // sections, stacks, conditional cards and pop-ups
+  const findRack = (ll, view) => {
+    if (!ll) return null;
+    const views = (ll.views || []).filter((v) => !view || v.path === view);
+    const walk = (n, depth) => {
+      if (!n || typeof n !== "object" || depth > 12) return null;
+      if (Array.isArray(n)) { for (const x of n) { const r = walk(x, depth + 1); if (r) return r; } return null; }
+      if (n.type === `custom:${TAG}` && Array.isArray(n.devices) && n.from_view === undefined && n.only === undefined) return n;
+      for (const k of ["sections", "cards", "card", "footer", "header"]) { const r = walk(n[k], depth + 1); if (r) return r; }
+      return null;
+    };
+    for (const v of views) { const r = walk(v, 0); if (r) return r; }
+    return null;
+  };
   const portList = (ports) => Object.entries(ports || {}).map(([k, p]) => (typeof p === "string" ? { port: k, entity: p } : { port: k, ...p }));
   const labelOf = (l) => (typeof l === "string" ? { label: l } : (l || {}));
 
@@ -268,8 +291,59 @@
 
     static getConfigElement() { return document.createElement(`${TAG}-editor`); }
 
+    // A linked card ('from_view' and/or 'only') has no devices of its own: it reads the main rack-card of the
+    // dashboard and shows all of it or only some units, so the rack is configured once.
     setConfig(config) {
-      if (!config || !Array.isArray(config.devices)) throw new Error("rack-card: 'devices' is required");
+      if (!config) throw new Error("rack-card: missing configuration");
+      if (config.from_view !== undefined || config.only !== undefined) {
+        this._raw = config; this._src = null; this._config = null;
+        if (this._hass) this._resolve(); else this._message("…");
+        return;
+      }
+      this._raw = null;
+      if (!Array.isArray(config.devices)) throw new Error("rack-card: 'devices' is required");
+      this._apply(config);
+    }
+
+    _message(text) {
+      this._config = null; this._watched = [];
+      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card class="msg">${esc(text)}</ha-card>`;
+    }
+
+    // read the main card again whenever the dashboard is saved (HA replaces the config object)
+    _resolve() {
+      const src = findRack(huiRoot()?.lovelace?.config, this._raw.from_view);
+      if (!src) { if (!this._config) this._message(`rack-card: no rack-card found${this._raw.from_view ? ` in the view '${this._raw.from_view}'` : ""}`); return; }
+      if (src === this._src && this._config) return;
+      this._src = src;
+      const { from_view, only, type, ...own } = this._raw;
+      const cfg = { ...src, ...own };
+      if (only !== undefined) {
+        const want = [].concat(only).map(Number);
+        const pick = (src.devices || []).filter((d) => want.includes(Number(d.u)));
+        if (!pick.length) { this._message("rack-card: none of the units in 'only' holds a device"); return; }
+        const sz = (d) => d.size || (d.type === "ups" ? 2 : 1);
+        const top = Math.min(...pick.map((d) => d.u)), bottom = Math.max(...pick.map((d) => d.u + sz(d) - 1));
+        // shift the units so the first one shown is U1; patch cable links follow
+        cfg.devices = pick.map((d) => {
+          const n = { ...d, u: d.u - top + 1 };
+          if (d.labels) n.labels = Object.fromEntries(Object.entries(d.labels).map(([p, l]) => {
+            if (!l || typeof l !== "object" || !l.link) return [p, l];
+            const [lu, lp] = String(l.link).split(":");
+            return [p, { ...l, link: `${Number(lu) - top + 1}:${lp}` }];
+          }));
+          return n;
+        });
+        cfg.units = bottom - top + 1;
+        if (!("cooling" in own)) delete cfg.cooling;
+        if (!("frame" in own)) cfg.frame = false;
+        if (!("title" in own)) delete cfg.title;
+      }
+      if (!("device_tap" in own)) cfg.device_tap = false;
+      this._apply(cfg);
+    }
+
+    _apply(config) {
       const devices = config.devices.map((d, i) => {
         if (!DRAW[d.type]) throw new Error(`rack-card: unknown device type '${d.type}'`);
         if (!(d.u >= 1)) throw new Error(`rack-card: device ${i + 1} needs 'u'`);
@@ -288,11 +362,13 @@
 
     set hass(hass) {
       this._hass = hass;
+      if (this._raw) this._resolve();
+      if (!this._config) return;
       const sig = (this._watched || []).map((id) => hass.states[id]?.state).join("|");
       if (sig !== this._sig) { this._sig = sig; this._update(); }
     }
 
-    getCardSize() { return 6 + Math.ceil(this._config.units * 0.6); }
+    getCardSize() { return this._config ? 6 + Math.ceil(this._config.units * 0.6) : 2; }
     getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }
 
     // ---------------------------------------------------------------------------------------------- build
@@ -314,9 +390,9 @@
       for (const d of this._devices) {
         const u0 = c.numbering === "bottom" ? c.units - (d.u + d.size - 1) + 1 : d.u;
         const y = CAP + (u0 - 1) * UH, h = d.size * UH;
-        const act = this._action(d);
+        const act = c.device_tap === false ? null : this._action(d);
         [d.status, d.cpu, d.memory, d.temperature, d.battery, d.load, d.runtime, d.disk, d.storage, d.ai_port?.status].forEach(add);
-        portList(d.type === "patch" ? null : d.ports).forEach((p) => add(p.entity));
+        portList(d.type === "patch" ? null : d.ports).forEach((p) => { add(p.entity); add(p.poe); });
         REG = {};
         devs += `<g class="dev${act ? " tap" : ""}" data-i="${d._i}"${act ? ` tabindex="0" role="button" aria-label="${esc(d.name || d.type)}"` : ""}>`
           + (d.name ? `<title>${esc(d.name)}</title>` : "")
@@ -337,7 +413,7 @@
         let fx = "";
         if (k.fan_in) fx += fanSvg(X0 + 42, cy, r, "in") + `<text x="${X0 + 42 + r + 8}" y="${cy + 3}" class="tiny">${esc(k.in_label ?? "IN")}</text>`;
         if (k.fan_out) fx += fanSvg(X1 - 42, cy, r, "out") + `<text x="${X1 - 42 - r - 8}" y="${cy + 3}" class="tiny" text-anchor="end">${esc(k.out_label ?? "OUT")}</text>`;
-        const act = this._action(k);
+        const act = c.device_tap === false ? null : this._action(k);
         cap = `<g class="dev${act ? " tap" : ""}" data-i="cooling"${act ? ` tabindex="0" role="button" aria-label="${esc(k.name || "Cooling")}"` : ""}>`
           + `<title>${esc(k.name || "Cooling")}</title>${cap}${fx}`
           + `<rect x="${X0 + PW / 2 - 70}" y="${cy - 15}" width="140" height="30" rx="4" class="oled"/>`
@@ -351,8 +427,12 @@
       this._watched = [...watched];
       this._sig = "";
       const title = c.title ? `<div class="title">${esc(c.title)}</div>` : "";
-      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card>${title}<div class="wrap" style="max-width:${esc(c.max_width || "100%")}">
-        <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(c.title || "Rack")}" class="${c.finish === "dark" ? "dark" : "light"}">
+      // frame: false draws the devices alone (no frame, cap, rails, numbers or plinth), cropped to their faceplates
+      const framed = c.frame !== false;
+      const box = framed ? `0 0 ${W} ${H}` : `${X0 - 1} ${CAP - 1} ${PW + 2} ${c.units * UH + 2}`;
+      this._pop = null;
+      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card class="${framed ? "" : "bare"}">${title}<div class="wrap" style="max-width:${esc(c.max_width || "100%")}"><div class="port-pop" hidden></div>
+        <svg viewBox="${box}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(c.title || "Rack")}" class="${c.finish === "dark" ? "dark" : "light"}">
           <defs>
             <linearGradient id="rk-frame-l" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d9dde1"/><stop offset=".5" stop-color="#eef0f2"/><stop offset="1" stop-color="#d9dde1"/></linearGradient>
             <linearGradient id="rk-depth-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9ba1a8"/><stop offset=".5" stop-color="#b8bdc3"/><stop offset="1" stop-color="#9ba1a8"/></linearGradient>
@@ -361,12 +441,12 @@
             <linearGradient id="rk-frame" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2b2f35"/><stop offset=".5" stop-color="#1f2227"/><stop offset="1" stop-color="#2b2f35"/></linearGradient>
             <linearGradient id="rk-depth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#050506"/><stop offset=".5" stop-color="#0d0e10"/><stop offset="1" stop-color="#050506"/></linearGradient>
           </defs>
-          <rect x="${GUT}" y="0" width="${PW + 2 * FR}" height="${H}" rx="7" class="frame"/>
+          ${framed ? `<rect x="${GUT}" y="0" width="${PW + 2 * FR}" height="${H}" rx="7" class="frame"/>` : ""}
           <rect x="${X0}" y="${CAP}" width="${PW}" height="${c.units * UH}" class="interior"/>
-          <rect x="${X0}" y="${CAP}" width="${RAIL}" height="${c.units * UH}" class="rail"/>
+          ${framed ? `<rect x="${X0}" y="${CAP}" width="${RAIL}" height="${c.units * UH}" class="rail"/>
           <rect x="${X1 - RAIL}" y="${CAP}" width="${RAIL}" height="${c.units * UH}" class="rail"/>
-          ${holes}${nums}${devs}${cables}${cap}
-          <rect x="${GUT + 10}" y="${H - BASE + 4}" width="${PW + 2 * FR - 20}" height="${BASE - 8}" rx="2" class="plinth"/>
+          ${holes}${nums}` : ""}${devs}${cables}${framed ? cap : ""}
+          ${framed ? `<rect x="${GUT + 10}" y="${H - BASE + 4}" width="${PW + 2 * FR - 20}" height="${BASE - 8}" rx="2" class="plinth"/>` : ""}
         </svg></div></ha-card>`;
 
       this.shadowRoot.querySelectorAll(".dev.tap").forEach((g) => {
@@ -375,12 +455,23 @@
         g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); run(); } });
       });
       // a device inside another one (the AI Port on the shelf) has its own action
-      this.shadowRoot.querySelectorAll(".sub").forEach((s) => {
+      if (c.device_tap !== false) this.shadowRoot.querySelectorAll(".sub").forEach((s) => {
         const d = this._devices.find((x) => String(x._i) === s.closest(".dev").dataset.i), sub = d && d[s.dataset.sub];
         if (!sub || !this._action(sub)) return;
         s.classList.add("tap");
         s.addEventListener("click", (e) => { e.stopPropagation(); this._exec(this._action(sub), sub); });
       });
+      // device_tap: false — the devices do nothing, the ports bound to an entity open it
+      if (c.device_tap === false) for (const d of this._devices) {
+        if (d._i < 0 || d.type === "patch") continue;
+        const g = this.shadowRoot.querySelector(`.dev[data-i="${d._i}"]`);
+        for (const p of portList(d.ports)) {
+          const el = g?.querySelector(`[data-port="${p.port}"]`);
+          if (!el || (!p.entity && !p.poe)) continue;
+          el.classList.add("tap");
+          el.addEventListener("click", (e) => { e.stopPropagation(); this._openPort(d, p, el); });
+        }
+      }
       if (this._hass) this._update();
     }
 
@@ -437,14 +528,12 @@
         if (d.type !== "patch") for (const p of portList(d.ports)) {
           const el = g.querySelector(`[data-port="${p.port}"]`);
           if (!el) continue;
-          const s = st(p.entity), ph = health(s);
-          const poe = !!(s && s.attributes?.unit_of_measurement === "W" && ph === "ok");
-          el.setAttribute("data-h", ph);
-          el.classList.toggle("poe", poe);
+          const pi = this._portInfo(p);
+          el.setAttribute("data-h", pi.h);
+          el.classList.toggle("poe", pi.w !== null && pi.w > 0);
           const led = g.querySelector(`[data-sfp-led="${p.port}"]`);
-          if (led) led.setAttribute("data-h", ph);
-          const name = p.name || s?.attributes?.friendly_name || p.entity || "";
-          title(el, `${String(p.port).toUpperCase()} · ${name}${s ? ` · ${hass.formatEntityState ? hass.formatEntityState(s) : s.state}` : ""}`);
+          if (led) led.setAttribute("data-h", pi.h);
+          title(el, `${portName(p.port)} · ${pi.name}${pi.w !== null && pi.w > 0 ? ` · PoE ${fmtW(pi.w)}` : ""}`);
         }
 
         if (d.type === "shelf" || d.type === "nuc") {
@@ -501,8 +590,60 @@
           el.classList.toggle("stopped", !spin);
           title(el, `${key === "in" ? (k.in_label ?? "IN") : (k.out_label ?? "OUT")} · ${rpm === null ? "—" : `${Math.round(rpm)} rpm`}`);
         });
-        setTxt(g, "fans", rpms.length ? `${Math.round(Math.max(...rpms))} RPM` : (k.fan_in || k.fan_out ? "FERME" : ""));
+        setTxt(g, "fans", rpms.length ? `${Math.round(Math.max(...rpms))} RPM` : (k.fan_in || k.fan_out ? strings(hass).fansStopped : ""));
       }
+      if (this._pop) this._renderPop();
+    }
+
+    // ---------------------------------------------------------------------------------------------- ports
+    // a port reads 'entity' (the connected device: state or power) and, optionally, 'poe' (its PoE power in W)
+    _portInfo(p) {
+      const hass = this._hass, s = p.entity ? hass?.states[p.entity] : undefined;
+      const isW = (x) => !!(x && x.attributes?.unit_of_measurement === "W");
+      const ws = p.poe ? hass?.states[p.poe] : (isW(s) ? s : undefined);
+      const wv = ws ? parseFloat(ws.state) : NaN, w = isFinite(wv) ? wv : null;
+      const h = s ? health(s) : (w !== null ? (w > 0 ? "ok" : "idle") : "none");
+      return { h, w, name: p.name || s?.attributes?.friendly_name || p.entity || "" };
+    }
+
+    // the little panel a tapped port opens, under the port
+    _openPort(d, p, el) {
+      this._closePop();
+      this._pop = { d, p, el };
+      this._renderPop();
+      const box = this.shadowRoot.querySelector(".port-pop");
+      this._outside = (e) => { const path = e.composedPath(); if (!path.includes(box) && !path.includes(el)) this._closePop(); };
+      this._esc = (e) => { if (e.key === "Escape") this._closePop(); };
+      setTimeout(() => { if (!this._pop) return; document.addEventListener("click", this._outside, true); document.addEventListener("keydown", this._esc); });
+    }
+
+    _closePop() {
+      if (this._outside) document.removeEventListener("click", this._outside, true);
+      if (this._esc) document.removeEventListener("keydown", this._esc);
+      this._outside = this._esc = null; this._pop = null;
+      const box = this.shadowRoot.querySelector(".port-pop");
+      if (box) box.hidden = true;
+    }
+
+    disconnectedCallback() { this._closePop(); }
+
+    _renderPop() {
+      const box = this.shadowRoot.querySelector(".port-pop"), wrap = this.shadowRoot.querySelector(".wrap");
+      if (!this._pop || !box || !wrap) return;
+      const { d, p, el } = this._pop, T = strings(this._hass), pi = this._portInfo(p);
+      const col = { ok: "#4ade80", idle: "#9ca3af", bad: "#f87171", none: "#9ca3af" }[pi.h];
+      const txt = { ok: T.portOn, idle: T.portOff, bad: T.portUnavailable, none: "—" }[pi.h];
+      let rows = `<div class="r"><span>${esc(T.portStatus)}</span><b><i class="dot" style="background:${col}"></i>${esc(txt)}</b></div>`;
+      if (p.poe || pi.w !== null) rows += `<div class="r"><span>PoE</span><b>${pi.w === null ? "—" : (pi.w > 0 ? fmtW(pi.w) : esc(T.portNoPoe))}</b></div>`;
+      const ent = p.entity || p.poe;
+      box.innerHTML = `<div class="ph"><div class="t"><small>${esc(portName(p.port, T.portWord))}</small><b>${esc(pi.name)}</b></div>`
+        + `<button class="x" aria-label="${esc(T.close)}">✕</button></div>${rows}${ent ? `<button class="more">${esc(T.portDetails)}</button>` : ""}`;
+      box.hidden = false;
+      box.querySelector(".x").addEventListener("click", (e) => { e.stopPropagation(); this._closePop(); });
+      box.querySelector(".more")?.addEventListener("click", (e) => { e.stopPropagation(); this._closePop(); this._exec({ action: "more-info", entity: ent }, d); });
+      const wr = wrap.getBoundingClientRect(), er = el.getBoundingClientRect(), bw = box.offsetWidth || 220;
+      box.style.left = `${clamp(er.left + er.width / 2 - wr.left - bw / 2, 0, Math.max(0, wr.width - bw))}px`;
+      box.style.top = `${er.bottom - wr.top + 6}px`;
     }
 
     // ---------------------------------------------------------------------------------------------- actions
@@ -544,9 +685,25 @@
 
   const CSS = `
     :host { display: block; }
-    ha-card { padding: 12px 10px 10px; overflow: hidden; }
+    ha-card { padding: 12px 10px 10px; overflow: visible; }
+    ha-card.bare { padding: 0; background: none; box-shadow: none; border: none; }
     .title { font: 500 16px/1.3 var(--ha-font-family-body, system-ui); color: var(--primary-text-color); padding: 2px 6px 10px; }
-    .wrap { margin: 0 auto; }
+    .wrap { margin: 0 auto; position: relative; }
+    .port-pop { position: absolute; z-index: 5; width: 220px; box-sizing: border-box; padding: 10px 12px 12px; border-radius: 14px;
+      background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color);
+      box-shadow: 0 8px 28px rgba(0,0,0,.28); border: 1px solid var(--divider-color); font: 13px/1.35 var(--ha-font-family-body, system-ui); }
+    .port-pop[hidden] { display: none; }
+    .port-pop .ph { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+    .port-pop .ph .t { flex: 1; min-width: 0; }
+    .port-pop .ph .t small { display: block; color: var(--secondary-text-color); font-size: 11px; font-weight: 600; letter-spacing: .3px; }
+    .port-pop .ph .t b { display: block; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .port-pop .x { border: none; background: none; color: var(--secondary-text-color); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+    .port-pop .r { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--divider-color); }
+    .port-pop .r span { color: var(--secondary-text-color); }
+    .port-pop .r b { font-weight: 600; }
+    .port-pop .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+    .port-pop .more { margin-top: 8px; width: 100%; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--divider-color); background: transparent;
+      color: var(--primary-color); font: 600 13px var(--ha-font-family-body, system-ui); cursor: pointer; }
     svg { display: block; width: 100%; height: auto; font-family: var(--ha-font-family-body, system-ui, sans-serif); -webkit-tap-highlight-color: transparent; }
     .frame { fill: url(#rk-frame); }
     .interior { fill: url(#rk-depth); }
@@ -580,6 +737,9 @@
     .aiport-hi { fill: #3a3e44; }
     .ai-txt { fill: #8a9097; font-size: 4px; font-weight: 700; letter-spacing: .6px; text-anchor: middle; }
     .sub.tap { cursor: pointer; }
+    .port.tap { cursor: pointer; }
+    @media (hover: hover) { .port.tap:hover .port-glow { stroke: var(--primary-color) !important; filter: none !important; } }
+    ha-card.msg { padding: 14px 16px; font: 13px/1.4 var(--ha-font-family-body, system-ui); color: var(--secondary-text-color); }
     .dev .sub-hl { stroke: transparent !important; fill: transparent !important; animation: none !important; }
     @media (hover: hover) { .dev .sub.tap:hover .sub-hl { stroke: var(--primary-color) !important; } }
     .black { fill: url(#rk-black); }
@@ -682,6 +842,12 @@
       general: "Rack", cooling: "Raffreddamento", devices: "Dispositivi", add: "Dispositivo", remove: "Rimuovi",
       ports: "Porte", addPort: "Aggiungi porta", patchLabels: "Etichette delle porte", pduLabels: "Etichette delle prese", free: "libera",
       aiPort: "AI Port sul ripiano", up: "Sposta su", down: "Sposta giù",
+      portWord: "Porta", portStatus: "Stato", portOn: "Collegato", portOff: "Spento", portUnavailable: "Non disponibile", portNoPoe: "Nessun consumo",
+      portDetails: "Dettagli", close: "Chiudi", fansStopped: "FERME",
+      linked: "Collegata a un'altra rack-card", makeLinked: "Collega a un'altra rack-card",
+      linkedHint: "Per mostrare solo alcuni dispositivi di un rack già configurato (per esempio in un pop-up), collega questa card: legge tutto da quella principale.",
+      linkedNote: "Dispositivi, porte, entità ed etichette arrivano dalla rack-card principale della vista scelta: si modificano lì.",
+      linkedMissing: "Nessuna rack-card con dispositivi in questa vista.",
       finish: { light: "Chiaro", dark: "Scuro" },
       types: { empty: "Slot vuoto", blank: "Pannello cieco UniFi", vented: "Pannello ventilato UniFi", pdu: "PDU", shelf: "Ripiano con NUC", switch: "Switch UniFi Pro Max 16 PoE", gateway: "UniFi Dream Machine SE", patch: "Patch panel", ups: "UPS" },
       colors: { blue: "Blu", grey: "Grigio", yellow: "Giallo", green: "Verde", red: "Rosso", black: "Nero", white: "Bianco", orange: "Arancio", purple: "Viola" },
@@ -691,8 +857,9 @@
         fault: "Guasto ventole", sensor_fault: "Guasto sensori", fan_in: "Ventola ingresso (rpm)", fan_out: "Ventola uscita (rpm)",
         type: "Tipo", u: "Posizione (U)", size: "Altezza (U)", label: "Scritta sul frontale", caption: "Scritta sotto lo schermo", brand: "Marca",
         cpu: "CPU", memory: "Memoria", disk: "Problema disco", storage: "Uso disco", battery: "Batteria", load: "Carico", runtime: "Autonomia (min)",
-        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso",
-        finish: "Colore del rack", show: "Mostra",
+        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità (dispositivo collegato)", poe: "PoE (sensore in W)", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso",
+        finish: "Colore del rack", show: "Mostra", frame: "Cornice del rack (spenta: solo i dispositivi, a tutta larghezza)",
+        from_view: "Vista della rack-card principale", only: "Dispositivi da mostrare", device_tap: "Tocco sul dispositivo intero (spento: si toccano le porte)",
       },
       numbering: { top: "Dall'alto (U1 in alto)", bottom: "Dal basso (U1 in basso)" },
       freeUnits: { empty: "Slot aperti", blank: "Pannelli ciechi", vented: "Pannelli ventilati" },
@@ -701,6 +868,12 @@
       general: "Rack", cooling: "Cooling", devices: "Devices", add: "Device", remove: "Remove",
       ports: "Ports", addPort: "Add port", patchLabels: "Port labels", pduLabels: "Outlet labels", free: "free",
       aiPort: "AI Port on the shelf", up: "Move up", down: "Move down",
+      portWord: "Port", portStatus: "Status", portOn: "Connected", portOff: "Off", portUnavailable: "Unavailable", portNoPoe: "Not drawing power",
+      portDetails: "Details", close: "Close", fansStopped: "STOPPED",
+      linked: "Linked to another rack-card", makeLinked: "Link to another rack-card",
+      linkedHint: "To show only some devices of a rack you already configured (e.g. in a pop-up), link this card: it reads everything from the main one.",
+      linkedNote: "Devices, ports, entities and labels come from the main rack-card of the chosen view: edit them there.",
+      linkedMissing: "No rack-card with devices in this view.",
       finish: { light: "Light", dark: "Dark" },
       types: { empty: "Empty slot", blank: "UniFi blank panel", vented: "UniFi vented panel", pdu: "PDU", shelf: "Shelf with NUC", switch: "UniFi Switch Pro Max 16 PoE", gateway: "UniFi Dream Machine SE", patch: "Patch panel", ups: "UPS" },
       colors: { blue: "Blue", grey: "Grey", yellow: "Yellow", green: "Green", red: "Red", black: "Black", white: "White", orange: "Orange", purple: "Purple" },
@@ -710,8 +883,9 @@
         fault: "Fan fault", sensor_fault: "Sensor fault", fan_in: "Intake fan (rpm)", fan_out: "Exhaust fan (rpm)",
         type: "Type", u: "Position (U)", size: "Height (U)", label: "Front label", caption: "Caption under the screen", brand: "Brand",
         cpu: "CPU", memory: "Memory", disk: "Disk problem", storage: "Disk usage", battery: "Battery", load: "Load", runtime: "Runtime (min)",
-        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to",
-        finish: "Rack colour", show: "Show",
+        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity (connected device)", poe: "PoE (power sensor in W)", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to",
+        finish: "Rack colour", show: "Show", frame: "Rack frame (off: the devices alone, full width)",
+        from_view: "View of the main rack-card", only: "Devices to show", device_tap: "Tap on the whole device (off: the ports are tapped)",
       },
       numbering: { top: "From the top (U1 at the top)", bottom: "From the bottom (U1 at the bottom)" },
       freeUnits: { empty: "Open slots", blank: "Blank panels", vented: "Vented panels" },
@@ -797,6 +971,7 @@
       sr.innerHTML = `<style>${EDITOR_CSS}</style>`;
       if (!c || !this._hass || !customElements.get("ha-form")) return;
       const T = strings(this._hass);
+      if (c.from_view !== undefined || c.only !== undefined) { this._renderLinked(T); return; }
       c.devices = c.devices || [];
 
       // general
@@ -806,9 +981,11 @@
         grid({ name: "numbering", selector: { select: { mode: "dropdown", options: [{ value: "top", label: T.numbering.top }, { value: "bottom", label: T.numbering.bottom }] } } },
           { name: "free_units", selector: { select: { mode: "dropdown", options: FREE.map((f) => ({ value: f, label: T.freeUnits[f] })) } } }),
         grid({ name: "finish", selector: { select: { mode: "dropdown", options: [{ value: "light", label: T.finish.light }, { value: "dark", label: T.finish.dark }] } } }, txt("max_width")),
-      ], { title: c.title, units: c.units, numbering: c.numbering || "top", free_units: c.free_units || "empty", finish: c.finish || "light", max_width: c.max_width }, (v) => {
+        { name: "frame", selector: { boolean: {} } },
+      ], { title: c.title, units: c.units, numbering: c.numbering || "top", free_units: c.free_units || "empty", finish: c.finish || "light", max_width: c.max_width, frame: c.frame !== false }, (v) => {
         const unitsChanged = v.units !== c.units;
         Object.assign(c, v);
+        if (c.frame !== false) delete c.frame;
         if (c.numbering === "top") delete c.numbering;
         if (c.free_units === "empty") delete c.free_units;
         if (c.finish === "light") delete c.finish;
@@ -842,7 +1019,46 @@
         bar.append(b);
       });
       list.append(bar);
+      const link = this._el("button", "add sm", `↪ ${esc(T.makeLinked)}`);
+      link.addEventListener("click", () => {
+        const views = this._rackViews();
+        this._config = { type: c.type || `custom:${TAG}`, from_view: views[0]?.value || "", only: [] };
+        this._fire(true);
+      });
+      list.append(this._el("p", "note", esc(T.linkedHint)), link);
       sr.append(list);
+    }
+
+    // views of this dashboard that hold a main rack-card
+    _rackViews() {
+      const ll = huiRoot()?.lovelace?.config;
+      return (ll?.views || []).filter((v) => v.path && findRack(ll, v.path)).map((v) => ({ value: v.path, label: v.title || v.path }));
+    }
+
+    // a linked card: which view to read and which units to show
+    _renderLinked(T) {
+      const sr = this.shadowRoot, c = this._config;
+      const ll = huiRoot()?.lovelace?.config, src = findRack(ll, c.from_view);
+      const box = this._el("div", "box", `<h3>${esc(T.linked)}</h3>`);
+      box.append(this._el("p", "note", esc(T.linkedNote)));
+      const views = this._rackViews();
+      const units = (src?.devices || []).slice().sort((a, b) => a.u - b.u).map((d) => ({ value: String(d.u), label: `U${d.u} · ${d.name || T.types[d.type] || d.type}` }));
+      const schema = [
+        { name: "from_view", selector: { select: { mode: "dropdown", options: views.length ? views : [{ value: c.from_view || "", label: c.from_view || "—" }] } } },
+        { name: "only", selector: { select: { multiple: true, mode: "list", options: units } } },
+        grid({ name: "frame", selector: { boolean: {} } }, { name: "device_tap", selector: { boolean: {} } }),
+      ];
+      box.append(this._form(schema, { from_view: c.from_view, only: [].concat(c.only || []).map(String), frame: c.frame === true, device_tap: c.device_tap === true }, (v) => {
+        const n = { type: c.type || `custom:${TAG}`, from_view: v.from_view };
+        if (v.only && v.only.length) n.only = v.only.map(Number);
+        if (v.frame) n.frame = true;
+        if (v.device_tap) n.device_tap = true;
+        const viewChanged = n.from_view !== c.from_view;
+        this._config = n;
+        this._fire(viewChanged);
+      }));
+      if (!src) box.append(this._el("p", "note", esc(T.linkedMissing)));
+      sr.append(box);
     }
 
     _size(d) { return d.size || (d.type === "ups" ? 2 : 1); }
@@ -953,15 +1169,15 @@
         const rows = portList(d.ports);
         const save = (redraw) => {
           const m = {};
-          rows.forEach((r) => { if (r.port !== undefined && r.port !== "") m[r.port] = this._clean({ name: r.name, entity: r.entity }); });
+          rows.forEach((r) => { if (r.port !== undefined && r.port !== "") m[r.port] = this._clean({ name: r.name, entity: r.entity, poe: r.poe }); });
           const cur = c.devices[i];
           cur.ports = m; if (!Object.keys(m).length) delete cur.ports;
           this._fire(redraw);
         };
         rows.forEach((r, n) => {
           const line = this._el("div", "row");
-          line.append(this._form([grid({ name: "port", selector: { select: { mode: "dropdown", options: portOptions(t).map((p) => ({ value: p, label: p.toUpperCase() })) } } }, txt("name"), ent("entity"))],
-            { port: String(r.port), name: r.name, entity: r.entity }, (v) => { rows[n] = v; save(); }));
+          line.append(this._form([grid({ name: "port", selector: { select: { mode: "dropdown", options: portOptions(t).map((p) => ({ value: p, label: p.toUpperCase() })) } } }, txt("name")), grid(ent("entity"), ent("poe"))],
+            { port: String(r.port), name: r.name, entity: r.entity, poe: r.poe }, (v) => { rows[n] = v; save(); }));
           const x = this._el("button", "x", "✕"); x.title = T.remove;
           x.addEventListener("click", () => { rows.splice(n, 1); save(true); });
           line.append(x); sec.append(line);
@@ -1037,6 +1253,7 @@
     button.sm { padding: 5px 10px; font-size: 12px; }
     button.x { padding: 4px 9px; }
     button.rm { margin-top: 10px; color: var(--error-color, #db4437); border-color: var(--error-color, #db4437); }
+    .note { margin: 10px 2px 8px; font: 12px/1.45 var(--ha-font-family-body, system-ui); color: var(--secondary-text-color); }
   `;
 
   customElements.define(TAG, RackCard);
