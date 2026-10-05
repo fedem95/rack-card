@@ -6,7 +6,7 @@
  * navigation to its pop-up hash (Bubble Card pop-ups). Plain JavaScript, no build step, no external libraries.
  */
 (() => {
-  const VERSION = "0.5.0";
+  const VERSION = "0.6.0";
   const TAG = "rack-card";
   if (customElements.get(TAG)) return;
 
@@ -62,6 +62,8 @@
   };
   const portList = (ports) => Object.entries(ports || {}).map(([k, p]) => (typeof p === "string" ? { port: k, entity: p } : { port: k, ...p }));
   const labelOf = (l) => (typeof l === "string" ? { label: l } : (l || {}));
+  // a patch port holds up to two cables: link is "U:port" or a list of them
+  const linksOf = (l) => [].concat(l?.link || []).filter(Boolean).map(String);
 
   // ------------------------------------------------------------------------------------------------ drawing
   const screws = (y, h) => {
@@ -213,9 +215,9 @@
         const r = Math.floor(i / per), c = i % per, x = sx + c * pitch + Math.floor(c / 6) * gap;
         const ky = rows === 2 ? y + 7 + r * 18 : y + 13;
         const l = labelOf((d.labels || {})[i + 1]);
-        const plugged = !!(l.label || l.color || l.link);
+        const plugged = !!(l.label || l.color || linksOf(l).length);
         reg(i + 1, x, ky, kw, kh);
-        out += `<g class="pp"><title>${esc(`${i + 1}${l.label ? ` · ${l.label}` : ""}${l.link ? ` → U${String(l.link).replace(":", " · ").toUpperCase()}` : ""}`)}</title>`
+        out += `<g class="pp"><title>${esc(`${i + 1}${l.label ? ` · ${l.label}` : ""}${linksOf(l).map((k) => ` → U${k.replace(":", " · ").toUpperCase()}`).join("")}`)}</title>`
           + `<rect x="${x}" y="${ky}" width="${kw}" height="${kh}" rx="1" class="keystone"/><rect x="${x + 1.8}" y="${ky + 2}" width="${kw - 3.6}" height="${kh - 4}" rx="0.6" class="keystone-in"/>`
           + (plugged ? `<rect x="${x + 0.8}" y="${ky + 1}" width="${kw - 1.6}" height="${kh - 2}" rx="1.2" fill="${esc(CABLE[l.color] || l.color || CABLE.blue)}" class="boot"/>` : "")
           + (rows === 1 ? `<text x="${x + kw / 2}" y="${ky - 2.4}" class="pnum">${i + 1}</text>` : "")
@@ -328,9 +330,9 @@
         cfg.devices = pick.map((d) => {
           const n = { ...d, u: d.u - top + 1 };
           if (d.labels) n.labels = Object.fromEntries(Object.entries(d.labels).map(([p, l]) => {
-            if (!l || typeof l !== "object" || !l.link) return [p, l];
-            const [lu, lp] = String(l.link).split(":");
-            return [p, { ...l, link: `${Number(lu) - top + 1}:${lp}` }];
+            if (!l || typeof l !== "object" || !linksOf(l).length) return [p, l];
+            const moved = linksOf(l).map((k) => { const [lu, lp] = k.split(":"); return `${Number(lu) - top + 1}:${lp}`; });
+            return [p, { ...l, link: moved.length > 1 ? moved : moved[0] }];
           }));
           return n;
         });
@@ -483,8 +485,8 @@
         if (d.type !== "patch" && d.type !== "patch-panel") continue;
         for (const [p, raw] of Object.entries(d.labels || {})) {
           const l = labelOf(raw);
-          if (!l.link) continue;
-          const [tu, tp] = String(l.link).split(":");
+          for (const k of linksOf(l)) {
+          const [tu, tp] = k.split(":");
           const a = ports[d.u]?.[p], b = ports[tu]?.[tp];
           if (!a || !b) continue;
           const col = esc(CABLE[l.color] || l.color || CABLE.blue);
@@ -498,6 +500,7 @@
             + `<rect x="${b.x + b.w / 2 - 2.5}" y="${down ? b.y + 1.6 : b.y + b.h - 3.2}" width="5" height="1.6" rx="0.6" class="boot-tab"/></g>`;
           // a cable leaving downwards crosses the port label: draw the label again on top of it
           if (down && l.label && a.h > 10.5) out += `<text x="${ax}" y="${a.y + a.h + 6}" class="pp-lbl halo">${esc(clip(l.label, Math.max(2, Math.floor((a.w + 5) / 2.6))))}</text>`;
+          }
         }
       }
       return out ? `<g class="cables">${out}</g>` : "";
@@ -634,6 +637,8 @@
       const col = { ok: "#4ade80", idle: "#9ca3af", bad: "#f87171", none: "#9ca3af" }[pi.h];
       const txt = { ok: T.portOn, idle: T.portOff, bad: T.portUnavailable, none: "—" }[pi.h];
       let rows = `<div class="r"><span>${esc(T.portStatus)}</span><b><i class="dot" style="background:${col}"></i>${esc(txt)}</b></div>`;
+      const ip = p.entity ? this._hass?.states[p.entity]?.attributes?.ip : undefined;
+      if (ip) rows += `<div class="r"><span>IP</span><b>${esc(ip)}</b></div>`;
       if (p.poe || pi.w !== null) rows += `<div class="r"><span>PoE</span><b>${pi.w === null ? "—" : (pi.w > 0 ? fmtW(pi.w) : esc(T.portNoPoe))}</b></div>`;
       const ent = p.entity || p.poe;
       box.innerHTML = `<div class="ph"><div class="t"><small>${esc(portName(p.port, T.portWord))}</small><b>${esc(pi.name)}</b></div>`
@@ -857,7 +862,7 @@
         fault: "Guasto ventole", sensor_fault: "Guasto sensori", fan_in: "Ventola ingresso (rpm)", fan_out: "Ventola uscita (rpm)",
         type: "Tipo", u: "Posizione (U)", size: "Altezza (U)", label: "Scritta sul frontale", caption: "Scritta sotto lo schermo", brand: "Marca",
         cpu: "CPU", memory: "Memoria", disk: "Problema disco", storage: "Uso disco", battery: "Batteria", load: "Carico", runtime: "Autonomia (min)",
-        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità (dispositivo collegato)", poe: "PoE (sensore in W)", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso",
+        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità (dispositivo collegato)", poe: "PoE (sensore in W)", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso", link2: "Seconda bretella",
         finish: "Colore del rack", show: "Mostra", frame: "Cornice del rack (spenta: solo i dispositivi, a tutta larghezza)",
         from_view: "Vista della rack-card principale", only: "Dispositivi da mostrare", device_tap: "Tocco sul dispositivo intero (spento: si toccano le porte)",
       },
@@ -883,7 +888,7 @@
         fault: "Fan fault", sensor_fault: "Sensor fault", fan_in: "Intake fan (rpm)", fan_out: "Exhaust fan (rpm)",
         type: "Type", u: "Position (U)", size: "Height (U)", label: "Front label", caption: "Caption under the screen", brand: "Brand",
         cpu: "CPU", memory: "Memory", disk: "Disk problem", storage: "Disk usage", battery: "Battery", load: "Load", runtime: "Runtime (min)",
-        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity (connected device)", poe: "PoE (power sensor in W)", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to",
+        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity (connected device)", poe: "PoE (power sensor in W)", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to", link2: "Second patch cable",
         finish: "Rack colour", show: "Show", frame: "Rack frame (off: the devices alone, full width)",
         from_view: "View of the main rack-card", only: "Devices to show", device_tap: "Tap on the whole device (off: the ports are tapped)",
       },
@@ -1093,9 +1098,9 @@
       if (!Object.keys(map).length) return;
       c.devices.forEach((x) => {
         Object.entries(x.labels || {}).forEach(([p, raw]) => {
-          if (!raw || typeof raw !== "object" || !raw.link) return;
-          const [u, port] = String(raw.link).split(":");
-          if (map[u] !== undefined) raw.link = `${map[u]}:${port}`;
+          if (!raw || typeof raw !== "object" || !linksOf(raw).length) return;
+          const moved = linksOf(raw).map((k) => { const [u, port] = k.split(":"); return map[u] !== undefined ? `${map[u]}:${port}` : k; });
+          raw.link = moved.length > 1 ? moved : moved[0];
         });
       });
     }
@@ -1203,11 +1208,12 @@
           const l = labelOf((d.labels || {})[p]);
           const line = this._el("div", "row");
           line.append(this._el("span", "pn", String(p)));
-          line.append(this._form([grid(txt("cable"), { name: "color", selector: { select: { mode: "dropdown", options: colors } } }), { name: "link", selector: { select: { mode: "dropdown", options: targets } } }],
-            { cable: l.label, color: l.color, link: l.link }, (v) => {
+          line.append(this._form([grid(txt("cable"), { name: "color", selector: { select: { mode: "dropdown", options: colors } } }), grid({ name: "link", selector: { select: { mode: "dropdown", options: targets } } }, { name: "link2", selector: { select: { mode: "dropdown", options: targets } } })],
+            { cable: l.label, color: l.color, link: linksOf(l)[0] || "", link2: linksOf(l)[1] || "" }, (v) => {
             const cur = c.devices[i];
             cur.labels = cur.labels || {};
-            const e = this._clean({ label: v.cable, color: v.color, link: v.link });
+            const ls = [v.link, v.link2].filter(Boolean);
+            const e = this._clean({ label: v.cable, color: v.color, link: ls.length > 1 ? ls : ls[0] });
             if (!Object.keys(e).length) delete cur.labels[p]; else cur.labels[p] = e.color || e.link ? e : e.label;
             if (!Object.keys(cur.labels).length) delete cur.labels;
             this._fire();

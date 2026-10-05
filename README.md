@@ -170,12 +170,14 @@ down).
 `5: { name: Access point, entity: sensor.ap_state, poe: sensor.ap_poe_power }`: `entity` is the connected device
 (any state, or a power sensor) and `poe` its PoE power in W. The port lights up green when the device is on, home,
 connected or above zero, blue while it draws PoE. When ports are tappable (`device_tap: false`) a tap opens a panel
-with the port, the device, its state, its PoE power and a button to its entity.
+with the port, the device, its state, its IP (when the entity has an `ip` attribute, as a router's device tracker
+does on the WAN port), its PoE power and a button to its entity.
 
 **Labels** (`patch`, `pdu`) map a port or outlet to a text, or for patch ports to
 `{ label, color, link }`: `color` is the cable colour (`blue`, `grey`, `yellow`, `green`, `red`, `black`, `white`,
 `orange`, `purple` or any CSS colour) and `link` wires it to a switch or gateway port as `"U:port"`, for example
-`"3:12"` for port 12 of the device at U3. The editor keeps links in step when a device moves.
+`"3:12"` for port 12 of the device at U3, SFP+ cages included (`"5:sfp2"`). A port can hold two cables, for a
+link that runs through the panel: `link: ["5:sfp2", "3:sfp2"]`. The editor keeps links in step when a device moves.
 
 ## Notes
 
