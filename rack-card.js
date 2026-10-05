@@ -6,7 +6,7 @@
  * navigation to its pop-up hash (Bubble Card pop-ups). Plain JavaScript, no build step, no external libraries.
  */
 (() => {
-  const VERSION = "0.6.1";
+  const VERSION = "0.6.2";
   const TAG = "rack-card";
   if (customElements.get(TAG)) return;
 
@@ -394,7 +394,7 @@
         const y = CAP + (u0 - 1) * UH, h = d.size * UH;
         const act = c.device_tap === false ? null : this._action(d);
         [d.status, d.cpu, d.memory, d.temperature, d.battery, d.load, d.runtime, d.disk, d.storage, d.ai_port?.status].forEach(add);
-        portList(d.type === "patch" ? null : d.ports).forEach((p) => { add(p.entity); add(p.poe); });
+        portList(d.type === "patch" ? null : d.ports).forEach((p) => { add(p.entity); add(p.poe); add(p.speed); });
         REG = {};
         devs += `<g class="dev${act ? " tap" : ""}" data-i="${d._i}"${act ? ` tabindex="0" role="button" aria-label="${esc(d.name || d.type)}"` : ""}>`
           + (d.name ? `<title>${esc(d.name)}</title>` : "")
@@ -469,7 +469,7 @@
         const g = this.shadowRoot.querySelector(`.dev[data-i="${d._i}"]`);
         for (const p of portList(d.ports)) {
           const el = g?.querySelector(`[data-port="${p.port}"]`);
-          if (!el || (!p.entity && !p.poe)) continue;
+          if (!el || (!p.entity && !p.poe && !p.speed)) continue;
           el.classList.add("tap");
           el.addEventListener("click", (e) => { e.stopPropagation(); this._openPort(d, p, el); });
         }
@@ -606,8 +606,12 @@
       const ws = p.poe ? hass?.states[p.poe] : (isW(s) ? s : undefined);
       const wv = ws ? parseFloat(ws.state) : NaN, w = isFinite(wv) ? wv : null;
       // on a port "off" is a device switched off (a TV in standby), not a fault: only unavailable is
-      const h = s ? (String(s.state).toLowerCase() === "off" ? "idle" : health(s)) : (w !== null ? (w > 0 ? "ok" : "idle") : "none");
-      return { h, w, name: p.name || s?.attributes?.friendly_name || p.entity || "" };
+      let h = s ? (String(s.state).toLowerCase() === "off" ? "idle" : health(s)) : (w !== null ? (w > 0 ? "ok" : "idle") : "none");
+      // 'speed' is the port's own link speed sensor: when it reads a number it says whether the link is up
+      const ss = p.speed ? hass?.states[p.speed] : undefined, sv = ss ? parseFloat(ss.state) : NaN;
+      const sp = isFinite(sv) ? sv : null;
+      if (sp !== null) h = sp > 0 ? "ok" : "idle";
+      return { h, w, sp, unit: ss?.attributes?.unit_of_measurement || "Mbit/s", name: p.name || s?.attributes?.friendly_name || p.entity || p.speed || "" };
     }
 
     // the little panel a tapped port opens, under the port
@@ -636,12 +640,16 @@
       if (!this._pop || !box || !wrap) return;
       const { d, p, el } = this._pop, T = strings(this._hass), pi = this._portInfo(p);
       const col = { ok: "#4ade80", idle: "#9ca3af", bad: "#f87171", none: "#9ca3af" }[pi.h];
-      const txt = { ok: T.portOn, idle: T.portOff, bad: T.portUnavailable, none: "—" }[pi.h];
+      const txt = { ok: T.portOn, idle: pi.sp !== null ? T.portNoLink : T.portOff, bad: T.portUnavailable, none: "—" }[pi.h];
       let rows = `<div class="r"><span>${esc(T.portStatus)}</span><b><i class="dot" style="background:${col}"></i>${esc(txt)}</b></div>`;
+      if (pi.sp !== null && pi.sp > 0) {
+        const g = pi.unit === "Mbit/s" && pi.sp >= 1000;
+        rows += `<div class="r"><span>${esc(T.portSpeed)}</span><b>${esc(`${String(g ? Math.round(pi.sp / 100) / 10 : Math.round(pi.sp)).replace(".", ",")} ${g ? "Gbit/s" : pi.unit}`)}</b></div>`;
+      }
       const ip = p.entity ? this._hass?.states[p.entity]?.attributes?.ip : undefined;
       if (ip) rows += `<div class="r"><span>IP</span><b>${esc(ip)}</b></div>`;
       if (p.poe || pi.w !== null) rows += `<div class="r"><span>PoE</span><b>${pi.w === null ? "—" : (pi.w > 0 ? fmtW(pi.w) : esc(T.portNoPoe))}</b></div>`;
-      const ent = p.entity || p.poe;
+      const ent = p.entity || p.speed || p.poe;
       box.innerHTML = `<div class="ph"><div class="t"><small>${esc(portName(p.port, T.portWord))}</small><b>${esc(pi.name)}</b></div>`
         + `<button class="x" aria-label="${esc(T.close)}">✕</button></div>${rows}${ent ? `<button class="more">${esc(T.portDetails)}</button>` : ""}`;
       box.hidden = false;
@@ -848,7 +856,7 @@
       general: "Rack", cooling: "Raffreddamento", devices: "Dispositivi", add: "Dispositivo", remove: "Rimuovi",
       ports: "Porte", addPort: "Aggiungi porta", patchLabels: "Etichette delle porte", pduLabels: "Etichette delle prese", free: "libera",
       aiPort: "AI Port sul ripiano", up: "Sposta su", down: "Sposta giù",
-      portWord: "Porta", portStatus: "Stato", portOn: "Collegato", portOff: "Spento", portUnavailable: "Non disponibile", portNoPoe: "Nessun consumo",
+      portWord: "Porta", portStatus: "Stato", portOn: "Collegato", portOff: "Spento", portUnavailable: "Non disponibile", portNoPoe: "Nessun consumo", portNoLink: "Nessun collegamento", portSpeed: "Velocità",
       portDetails: "Dettagli", close: "Chiudi", fansStopped: "FERME",
       linked: "Collegata a un'altra rack-card", makeLinked: "Collega a un'altra rack-card",
       linkedHint: "Per mostrare solo alcuni dispositivi di un rack già configurato (per esempio in un pop-up), collega questa card: legge tutto da quella principale.",
@@ -863,7 +871,7 @@
         fault: "Guasto ventole", sensor_fault: "Guasto sensori", fan_in: "Ventola ingresso (rpm)", fan_out: "Ventola uscita (rpm)",
         type: "Tipo", u: "Posizione (U)", size: "Altezza (U)", label: "Scritta sul frontale", caption: "Scritta sotto lo schermo", brand: "Marca",
         cpu: "CPU", memory: "Memoria", disk: "Problema disco", storage: "Uso disco", battery: "Batteria", load: "Carico", runtime: "Autonomia (min)",
-        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità (dispositivo collegato)", poe: "PoE (sensore in W)", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso", link2: "Seconda bretella",
+        outlets: "Prese", ports: "Numero porte", port: "Porta", entity: "Entità (dispositivo collegato)", poe: "PoE (sensore in W)", speed: "Velocità della porta (sensore link speed)", color: "Colore cavo", cable: "Cavo collegato", plug: "Cosa è collegato", link: "Bretella verso", link2: "Seconda bretella",
         finish: "Colore del rack", show: "Mostra", frame: "Cornice del rack (spenta: solo i dispositivi, a tutta larghezza)",
         from_view: "Vista della rack-card principale", only: "Dispositivi da mostrare", device_tap: "Tocco sul dispositivo intero (spento: si toccano le porte)",
       },
@@ -874,7 +882,7 @@
       general: "Rack", cooling: "Cooling", devices: "Devices", add: "Device", remove: "Remove",
       ports: "Ports", addPort: "Add port", patchLabels: "Port labels", pduLabels: "Outlet labels", free: "free",
       aiPort: "AI Port on the shelf", up: "Move up", down: "Move down",
-      portWord: "Port", portStatus: "Status", portOn: "Connected", portOff: "Off", portUnavailable: "Unavailable", portNoPoe: "Not drawing power",
+      portWord: "Port", portStatus: "Status", portOn: "Connected", portOff: "Off", portUnavailable: "Unavailable", portNoPoe: "Not drawing power", portNoLink: "No link", portSpeed: "Speed",
       portDetails: "Details", close: "Close", fansStopped: "STOPPED",
       linked: "Linked to another rack-card", makeLinked: "Link to another rack-card",
       linkedHint: "To show only some devices of a rack you already configured (e.g. in a pop-up), link this card: it reads everything from the main one.",
@@ -889,7 +897,7 @@
         fault: "Fan fault", sensor_fault: "Sensor fault", fan_in: "Intake fan (rpm)", fan_out: "Exhaust fan (rpm)",
         type: "Type", u: "Position (U)", size: "Height (U)", label: "Front label", caption: "Caption under the screen", brand: "Brand",
         cpu: "CPU", memory: "Memory", disk: "Disk problem", storage: "Disk usage", battery: "Battery", load: "Load", runtime: "Runtime (min)",
-        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity (connected device)", poe: "PoE (power sensor in W)", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to", link2: "Second patch cable",
+        outlets: "Outlets", ports: "Number of ports", port: "Port", entity: "Entity (connected device)", poe: "PoE (power sensor in W)", speed: "Port speed (link speed sensor)", color: "Cable colour", cable: "Connected cable", plug: "Plugged in", link: "Patch cable to", link2: "Second patch cable",
         finish: "Rack colour", show: "Show", frame: "Rack frame (off: the devices alone, full width)",
         from_view: "View of the main rack-card", only: "Devices to show", device_tap: "Tap on the whole device (off: the ports are tapped)",
       },
@@ -1175,15 +1183,15 @@
         const rows = portList(d.ports);
         const save = (redraw) => {
           const m = {};
-          rows.forEach((r) => { if (r.port !== undefined && r.port !== "") m[r.port] = this._clean({ name: r.name, entity: r.entity, poe: r.poe }); });
+          rows.forEach((r) => { if (r.port !== undefined && r.port !== "") m[r.port] = this._clean({ name: r.name, entity: r.entity, poe: r.poe, speed: r.speed }); });
           const cur = c.devices[i];
           cur.ports = m; if (!Object.keys(m).length) delete cur.ports;
           this._fire(redraw);
         };
         rows.forEach((r, n) => {
           const line = this._el("div", "row");
-          line.append(this._form([grid({ name: "port", selector: { select: { mode: "dropdown", options: portOptions(t).map((p) => ({ value: p, label: p.toUpperCase() })) } } }, txt("name")), grid(ent("entity"), ent("poe"))],
-            { port: String(r.port), name: r.name, entity: r.entity, poe: r.poe }, (v) => { rows[n] = v; save(); }));
+          line.append(this._form([grid({ name: "port", selector: { select: { mode: "dropdown", options: portOptions(t).map((p) => ({ value: p, label: p.toUpperCase() })) } } }, txt("name")), grid(ent("entity"), ent("poe")), ent("speed")],
+            { port: String(r.port), name: r.name, entity: r.entity, poe: r.poe, speed: r.speed }, (v) => { rows[n] = v; save(); }));
           const x = this._el("button", "x", "✕"); x.title = T.remove;
           x.addEventListener("click", () => { rows.splice(n, 1); save(true); });
           line.append(x); sec.append(line);

@@ -168,7 +168,9 @@ down).
 
 **Ports** (`switch`, `gateway`) map a port to an entity, either `5: sensor.some_entity` or
 `5: { name: Access point, entity: sensor.ap_state, poe: sensor.ap_poe_power }`: `entity` is the connected device
-(any state, or a power sensor) and `poe` its PoE power in W. The port lights up green when the device is on, home,
+(any state, or a power sensor), `poe` its PoE power in W and `speed` the port's own link speed sensor (the UniFi
+integration has one per port, disabled by default): when `speed` reads a number it decides the light (on above zero,
+off at zero) and the panel shows the speed. The port lights up green when the device is on, home,
 connected or above zero, blue while it draws PoE. When ports are tappable (`device_tap: false`) a tap opens a panel
 with the port, the device, its state, its IP (when the entity has an `ip` attribute, as a router's device tracker
 does on the WAN port), its PoE power and a button to its entity.
