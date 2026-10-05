@@ -6,7 +6,7 @@
  * navigation to its pop-up hash (Bubble Card pop-ups). Plain JavaScript, no build step, no external libraries.
  */
 (() => {
-  const VERSION = "0.6.0";
+  const VERSION = "0.6.1";
   const TAG = "rack-card";
   if (customElements.get(TAG)) return;
 
@@ -605,7 +605,8 @@
       const isW = (x) => !!(x && x.attributes?.unit_of_measurement === "W");
       const ws = p.poe ? hass?.states[p.poe] : (isW(s) ? s : undefined);
       const wv = ws ? parseFloat(ws.state) : NaN, w = isFinite(wv) ? wv : null;
-      const h = s ? health(s) : (w !== null ? (w > 0 ? "ok" : "idle") : "none");
+      // on a port "off" is a device switched off (a TV in standby), not a fault: only unavailable is
+      const h = s ? (String(s.state).toLowerCase() === "off" ? "idle" : health(s)) : (w !== null ? (w > 0 ? "ok" : "idle") : "none");
       return { h, w, name: p.name || s?.attributes?.friendly_name || p.entity || "" };
     }
 
