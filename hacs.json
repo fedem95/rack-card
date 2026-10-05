@@ -1,0 +1,7 @@
+{
+  "name": "Rack Card",
+  "content_in_root": true,
+  "filename": "rack-card.js",
+  "render_readme": true,
+  "homeassistant": "2025.11.0"
+}

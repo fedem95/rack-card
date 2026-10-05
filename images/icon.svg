@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3fc1d9"/><stop offset=".55" stop-color="#2f7de1"/><stop offset="1" stop-color="#3b4bd6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".28" cy=".18" r=".7">
+      <stop offset="0" stop-color="#fff" stop-opacity=".4"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#dfe3e7"/><stop offset=".5" stop-color="#f4f6f8"/><stop offset="1" stop-color="#dfe3e7"/>
+    </linearGradient>
+    <linearGradient id="alu" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eef0f2"/><stop offset="1" stop-color="#c9ced3"/>
+    </linearGradient>
+    <linearGradient id="ups" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c3036"/><stop offset="1" stop-color="#15171a"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0b1a4d" flood-opacity=".35"/></filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+
+  <!-- the rack -->
+  <g filter="url(#sh)">
+    <rect x="96" y="76" width="320" height="360" rx="22" fill="url(#frame)"/>
+    <rect x="118" y="100" width="276" height="312" rx="6" fill="#a9afb6"/>
+  </g>
+
+  <!-- switch: a row of ports, some lit -->
+  <rect x="112" y="108" width="288" height="56" rx="7" fill="url(#alu)" stroke="#aeb4ba" stroke-width="2"/>
+  <rect x="126" y="120" width="30" height="30" rx="5" fill="#111316"/>
+  <g fill="#111316">
+    <rect x="170" y="126" width="20" height="18" rx="2"/><rect x="198" y="126" width="20" height="18" rx="2"/>
+    <rect x="226" y="126" width="20" height="18" rx="2"/><rect x="254" y="126" width="20" height="18" rx="2"/>
+    <rect x="290" y="126" width="20" height="18" rx="2"/><rect x="318" y="126" width="20" height="18" rx="2"/>
+    <rect x="346" y="126" width="20" height="18" rx="2"/><rect x="374" y="126" width="16" height="18" rx="2"/>
+  </g>
+  <g fill="none" stroke-width="3">
+    <rect x="196" y="124" width="24" height="22" rx="4" stroke="#4ade80"/>
+    <rect x="288" y="124" width="24" height="22" rx="4" stroke="#60a5fa"/>
+    <rect x="344" y="124" width="24" height="22" rx="4" stroke="#60a5fa"/>
+  </g>
+
+  <!-- patch panel with two cables -->
+  <rect x="112" y="172" width="288" height="56" rx="7" fill="url(#alu)" stroke="#aeb4ba" stroke-width="2"/>
+  <g fill="#2a2d31">
+    <rect x="132" y="188" width="18" height="22" rx="2"/><rect x="160" y="188" width="18" height="22" rx="2"/>
+    <rect x="188" y="188" width="18" height="22" rx="2"/><rect x="216" y="188" width="18" height="22" rx="2"/>
+    <rect x="262" y="188" width="18" height="22" rx="2"/><rect x="290" y="188" width="18" height="22" rx="2"/>
+    <rect x="318" y="188" width="18" height="22" rx="2"/><rect x="346" y="188" width="18" height="22" rx="2"/>
+  </g>
+  <path d="M141 192C141 168 208 170 208 140" fill="none" stroke="#0f1b3d" stroke-opacity=".35" stroke-width="11" stroke-linecap="round"/>
+  <path d="M141 192C141 168 208 170 208 140" fill="none" stroke="#facc15" stroke-width="7" stroke-linecap="round"/>
+  <rect x="132" y="188" width="18" height="22" rx="3" fill="#facc15"/>
+
+  <!-- gateway with its drive bay -->
+  <rect x="112" y="236" width="288" height="56" rx="7" fill="url(#alu)" stroke="#aeb4ba" stroke-width="2"/>
+  <rect x="126" y="248" width="30" height="30" rx="5" fill="#111316"/>
+  <rect x="176" y="250" width="66" height="28" rx="4" fill="#b9bfc5" stroke="#9aa1a8" stroke-width="2"/>
+  <circle cx="188" cy="264" r="4" fill="#4ade80"/>
+  <g fill="#111316">
+    <rect x="254" y="248" width="17" height="13" rx="2"/><rect x="276" y="248" width="17" height="13" rx="2"/>
+    <rect x="298" y="248" width="17" height="13" rx="2"/><rect x="320" y="248" width="17" height="13" rx="2"/>
+    <rect x="276" y="266" width="17" height="13" rx="2"/><rect x="298" y="266" width="17" height="13" rx="2"/>
+    <rect x="320" y="266" width="17" height="13" rx="2"/><rect x="352" y="266" width="17" height="13" rx="2"/>
+  </g>
+  <!-- red patch cable down to the gateway, drawn over it -->
+  <path d="M299 206C299 232 262 236 262 258" fill="none" stroke="#0f1b3d" stroke-opacity=".35" stroke-width="11" stroke-linecap="round"/>
+  <path d="M299 206C299 232 262 236 262 258" fill="none" stroke="#ef4444" stroke-width="7" stroke-linecap="round"/>
+  <rect x="290" y="188" width="18" height="22" rx="3" fill="#ef4444"/>
+  <rect x="254" y="248" width="17" height="13" rx="3" fill="#ef4444"/>
+
+  <!-- UPS, two units, display on the right -->
+  <rect x="112" y="300" width="288" height="104" rx="8" fill="url(#ups)"/>
+  <g fill="#0b0c0e">
+    <rect x="132" y="322" width="7" height="60" rx="3.5"/><rect x="148" y="322" width="7" height="60" rx="3.5"/>
+    <rect x="164" y="322" width="7" height="60" rx="3.5"/><rect x="180" y="322" width="7" height="60" rx="3.5"/>
+    <rect x="196" y="322" width="7" height="60" rx="3.5"/><rect x="212" y="322" width="7" height="60" rx="3.5"/>
+  </g>
+  <circle cx="254" cy="352" r="13" fill="none" stroke="#4ade80" stroke-width="4"/>
+  <rect x="282" y="320" width="102" height="64" rx="6" fill="#1c3a52"/>
+  <rect x="296" y="336" width="40" height="22" rx="3" fill="none" stroke="#bfe3ff" stroke-width="4"/>
+  <rect x="336" y="342" width="5" height="10" fill="#bfe3ff"/>
+  <rect x="301" y="341" width="30" height="12" rx="1.5" fill="#bfe3ff"/>
+  <rect x="296" y="366" width="64" height="6" rx="3" fill="#a8cdea"/>
+</svg>
