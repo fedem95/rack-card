@@ -6,7 +6,7 @@
  * navigation to its pop-up hash (Bubble Card pop-ups). Plain JavaScript, no build step, no external libraries.
  */
 (() => {
-  const VERSION = "0.6.2";
+  const VERSION = "0.6.3";
   const TAG = "rack-card";
   if (customElements.get(TAG)) return;
 
@@ -433,7 +433,7 @@
       const framed = c.frame !== false;
       const box = framed ? `0 0 ${W} ${H}` : `${X0 - 1} ${CAP - 1} ${PW + 2} ${c.units * UH + 2}`;
       this._pop = null;
-      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card class="${framed ? "" : "bare"}">${title}<div class="wrap" style="max-width:${esc(c.max_width || "100%")}"><div class="port-pop" hidden></div>
+      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card class="${framed ? "" : "bare"}">${title}<div class="wrap" style="max-width:${esc(c.max_width || "100%")}">
         <svg viewBox="${box}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(c.title || "Rack")}" class="${c.finish === "dark" ? "dark" : "light"}">
           <defs>
             <linearGradient id="rk-frame-l" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d9dde1"/><stop offset=".5" stop-color="#eef0f2"/><stop offset="1" stop-color="#d9dde1"/></linearGradient>
@@ -449,7 +449,10 @@
           <rect x="${X1 - RAIL}" y="${CAP}" width="${RAIL}" height="${c.units * UH}" class="rail"/>
           ${holes}${nums}` : ""}${devs}${cables}${framed ? cap : ""}
           ${framed ? `<rect x="${GUT + 10}" y="${H - BASE + 4}" width="${PW + 2 * FR - 20}" height="${BASE - 8}" rx="2" class="plinth"/>` : ""}
-        </svg></div></ha-card>`;
+        </svg>
+        ${/* without a frame the card is as short as its devices: the port panel opens below them, in the flow, so a
+             pop-up or a short container never clips it; on a framed rack it floats under the port */ ""}
+        <div class="port-pop${framed ? "" : " inline"}" hidden></div></div></ha-card>`;
 
       this.shadowRoot.querySelectorAll(".dev.tap").forEach((g) => {
         const run = () => this._run(g.dataset.i);
@@ -616,6 +619,8 @@
 
     // the little panel a tapped port opens, under the port
     _openPort(d, p, el) {
+      // a second tap on the same port closes its panel
+      if (this._pop && this._pop.el === el) { this._closePop(); return; }
       this._closePop();
       this._pop = { d, p, el };
       this._renderPop();
@@ -638,7 +643,7 @@
     _renderPop() {
       const box = this.shadowRoot.querySelector(".port-pop"), wrap = this.shadowRoot.querySelector(".wrap");
       if (!this._pop || !box || !wrap) return;
-      const { d, p, el } = this._pop, T = strings(this._hass), pi = this._portInfo(p);
+      const { p, el } = this._pop, T = strings(this._hass), pi = this._portInfo(p);
       const col = { ok: "#4ade80", idle: "#9ca3af", bad: "#f87171", none: "#9ca3af" }[pi.h];
       const txt = { ok: T.portOn, idle: pi.sp !== null ? T.portNoLink : T.portOff, bad: T.portUnavailable, none: "—" }[pi.h];
       let rows = `<div class="r"><span>${esc(T.portStatus)}</span><b><i class="dot" style="background:${col}"></i>${esc(txt)}</b></div>`;
@@ -649,12 +654,20 @@
       const ip = p.entity ? this._hass?.states[p.entity]?.attributes?.ip : undefined;
       if (ip) rows += `<div class="r"><span>IP</span><b>${esc(ip)}</b></div>`;
       if (p.poe || pi.w !== null) rows += `<div class="r"><span>PoE</span><b>${pi.w === null ? "—" : (pi.w > 0 ? fmtW(pi.w) : esc(T.portNoPoe))}</b></div>`;
-      const ent = p.entity || p.speed || p.poe;
       box.innerHTML = `<div class="ph"><div class="t"><small>${esc(portName(p.port, T.portWord))}</small><b>${esc(pi.name)}</b></div>`
-        + `<button class="x" aria-label="${esc(T.close)}">✕</button></div>${rows}${ent ? `<button class="more">${esc(T.portDetails)}</button>` : ""}`;
+        + `<button class="x" aria-label="${esc(T.close)}">✕</button></div>${rows}`;
       box.hidden = false;
       box.querySelector(".x").addEventListener("click", (e) => { e.stopPropagation(); this._closePop(); });
-      box.querySelector(".more")?.addEventListener("click", (e) => { e.stopPropagation(); this._closePop(); this._exec({ action: "more-info", entity: ent }, d); });
+      if (box.classList.contains("inline")) {
+        // in the flow, full width: only the arrow follows the port, measured once the panel is laid out
+        const arrow = () => {
+          const w = wrap.getBoundingClientRect(), e = el.getBoundingClientRect();
+          if (w.width) box.style.setProperty("--ax", `${clamp(e.left + e.width / 2 - w.left, 18, Math.max(18, w.width - 18))}px`);
+        };
+        arrow();
+        requestAnimationFrame(arrow);
+        return;
+      }
       const wr = wrap.getBoundingClientRect(), er = el.getBoundingClientRect(), bw = box.offsetWidth || 220;
       box.style.left = `${clamp(er.left + er.width / 2 - wr.left - bw / 2, 0, Math.max(0, wr.width - bw))}px`;
       box.style.top = `${er.bottom - wr.top + 6}px`;
@@ -707,6 +720,9 @@
       background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color);
       box-shadow: 0 8px 28px rgba(0,0,0,.28); border: 1px solid var(--divider-color); font: 13px/1.35 var(--ha-font-family-body, system-ui); }
     .port-pop[hidden] { display: none; }
+    .port-pop.inline { position: relative; width: 100%; margin-top: 10px; box-shadow: none; }
+    .port-pop.inline::before { content: ""; position: absolute; top: -6px; left: calc(var(--ax, 50%) - 6px); width: 10px; height: 10px;
+      background: inherit; border-left: 1px solid var(--divider-color); border-top: 1px solid var(--divider-color); transform: rotate(45deg); }
     .port-pop .ph { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
     .port-pop .ph .t { flex: 1; min-width: 0; }
     .port-pop .ph .t small { display: block; color: var(--secondary-text-color); font-size: 11px; font-weight: 600; letter-spacing: .3px; }
@@ -716,8 +732,6 @@
     .port-pop .r span { color: var(--secondary-text-color); }
     .port-pop .r b { font-weight: 600; }
     .port-pop .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-    .port-pop .more { margin-top: 8px; width: 100%; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--divider-color); background: transparent;
-      color: var(--primary-color); font: 600 13px var(--ha-font-family-body, system-ui); cursor: pointer; }
     svg { display: block; width: 100%; height: auto; font-family: var(--ha-font-family-body, system-ui, sans-serif); -webkit-tap-highlight-color: transparent; }
     .frame { fill: url(#rk-frame); }
     .interior { fill: url(#rk-depth); }
@@ -857,7 +871,7 @@
       ports: "Porte", addPort: "Aggiungi porta", patchLabels: "Etichette delle porte", pduLabels: "Etichette delle prese", free: "libera",
       aiPort: "AI Port sul ripiano", up: "Sposta su", down: "Sposta giù",
       portWord: "Porta", portStatus: "Stato", portOn: "Collegato", portOff: "Spento", portUnavailable: "Non disponibile", portNoPoe: "Nessun consumo", portNoLink: "Nessun collegamento", portSpeed: "Velocità",
-      portDetails: "Dettagli", close: "Chiudi", fansStopped: "FERME",
+      close: "Chiudi", fansStopped: "FERME",
       linked: "Collegata a un'altra rack-card", makeLinked: "Collega a un'altra rack-card",
       linkedHint: "Per mostrare solo alcuni dispositivi di un rack già configurato (per esempio in un pop-up), collega questa card: legge tutto da quella principale.",
       linkedNote: "Dispositivi, porte, entità ed etichette arrivano dalla rack-card principale della vista scelta: si modificano lì.",
@@ -883,7 +897,7 @@
       ports: "Ports", addPort: "Add port", patchLabels: "Port labels", pduLabels: "Outlet labels", free: "free",
       aiPort: "AI Port on the shelf", up: "Move up", down: "Move down",
       portWord: "Port", portStatus: "Status", portOn: "Connected", portOff: "Off", portUnavailable: "Unavailable", portNoPoe: "Not drawing power", portNoLink: "No link", portSpeed: "Speed",
-      portDetails: "Details", close: "Close", fansStopped: "STOPPED",
+      close: "Close", fansStopped: "STOPPED",
       linked: "Linked to another rack-card", makeLinked: "Link to another rack-card",
       linkedHint: "To show only some devices of a rack you already configured (e.g. in a pop-up), link this card: it reads everything from the main one.",
       linkedNote: "Devices, ports, entities and labels come from the main rack-card of the chosen view: edit them there.",
